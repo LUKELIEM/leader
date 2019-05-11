@@ -25,15 +25,16 @@ def unpack_env_obs(env_obs):
     
     """
     
-    num_agents = len(env_obs)  # environ observations is a list of agents' observations
-    
     obs = []
-    for i in range(num_agents):
+
+    for i in range(len(env_obs)):
         x = env_obs[i]   # take the indexed agent's observation
-        x = torch.Tensor(x)   # Convert to tensor
+
+        x = torch.Tensor(x.copy())   # Convert to tensor
         
         # Policy is a 3-layer CNN
-        x = x.view(1, 10, 20, -1)  # reshape into environment defined stacked frames
+        width, height, num_frames = x.shape
+        x = x.view(1, width, height, -1)   # reshape into environment defined stacked frames
         x = x.permute(0, 3, 1, 2)  # permute to Policy accepted stacked frames
         obs.append(x)
         
@@ -61,7 +62,7 @@ def select_action(model, state, lstm_hc, cuda):
 """
 
 
-def load_info(agents, info, narrate=False):
+def load_info(agents, params, info, narrate=False):
     """
     ENV --> Agent Policy Interface
     ==============================
@@ -72,12 +73,15 @@ def load_info(agents, info, narrate=False):
 
     for i in range(len(agents)):    
         agents[i].load_info(info[i])
+
         if narrate:
-            if agents[i].tagged:
-                print('frame {}, agent{} is tagged'.format(frame,i))
-            if agents[i].laser_fired:
-                print('frame {}, agent{} fires its laser'.format(frame,i))
-                print('and hit {} US and {} THEM'.format(agents[i].US_hit, agents[i].THEM_hit))
+            # Only crawlers can fire laser
+            if params[i]['type'] is 'crawler':
+                if agents[i].tagged:
+                    print('Agent{} is tagged'.format(i))
+                if agents[i].laser_fired:
+                    print('Agent{} fires its laser'.format(i))
+                    print('and hit {} US and {} THEM'.format(agents[i].US_hit, agents[i].THEM_hit))
     return
 
 
