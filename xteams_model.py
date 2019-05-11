@@ -475,7 +475,7 @@ def save_model(file_name, ep, model, optimizer):
     
     return
     
-def load_model(agent, optimizer, model_file):
+def load_model(agent, optimizer, model_file, device = torch.device("cuda")):
     """
     Convert a model file saved using pickle into a file where model, optimizer and epoch parameters
     are saved into a dictionary prior being saved.
@@ -485,7 +485,7 @@ def load_model(agent, optimizer, model_file):
     
     The original file is assumed to be under orig_dir. The converted file is saved under conv_dir.
     """
-    checkpoint = torch.load(model_file)
+    checkpoint = torch.load(model_file, map_location=device)
     episode = checkpoint['epoch']
     agent.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
