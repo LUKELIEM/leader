@@ -297,6 +297,14 @@ class CrossingEnv(gym.Env):
                     THEM_hit += 1
         return US_hit, THEM_hit
 
+    # A function that returns how many apples   
+    def _apples_in_zone(targetzone):
+
+        (x,y),(width, height) = targetzone
+        apples = np.sum(self.initial_food[x:x+width, y:y+height])
+        return apples
+
+
 
     # A function to take the game one step forward
     # Inputs: a list of actions indexed by agent
@@ -419,11 +427,15 @@ class CrossingEnv(gym.Env):
                     if team_index is not None:
                         x,y = self.agent_locations[i]
                         self.target_zones[team_index] = ((x,y),(TARGET_WIDTH,TARGET_HEIGHT))  # set the team's target zone
+
+                        # 5-11-2019 Update leader metrics - num apples in target zone
+                        self.apples_targetzone[team_index] = _apples_in_zone(self.target_zones[team_index])
             else:
                 raise Exception('Invalid type-role for agent {}: {}-{}'.format(i, self.agent_types[i],self.agent_roles[i]))
 
         # Debug agent movements
         # print (self.agent_locations)
+        print (self.apples_targetzone)
       
         # (3) Set target and banned zones and generate metrics
         # Now that the agents' positions are final, we place the banned or target zone into the agents' game spaces.
@@ -767,6 +779,10 @@ class CrossingEnv(gym.Env):
         self.in_targetzone =  [0 if agent_type is 'crawler' else None 
                                     for agent_type in self.agent_types]    # Inside Target Zone = False
 
+        # 5-11-2019 Leader (crawler or drone) metrics
+        self.apples_targetzone = [0 for team in self.teams]   # Num of apples in team's targetzone
+        self.US_targetzone = [0 for team in self.teams]   # Num of US crawlers in team's targetzone
+
         self.consumption = []    # a list for keep track of consumption history
 
         return self.state_n  # Since state_n is a property object, so it will call function _state_n()
@@ -903,7 +919,7 @@ class CrossingEnv(gym.Env):
 
 
 _spec = {
-    'id': 'xTeam-Luke-v055',
+    'id': 'xTeam-Luke-v056',
     'entry_point': CrossingEnv,
     'reward_threshold': 500,   # The environment threshold at 100 appears to be too low
 }
