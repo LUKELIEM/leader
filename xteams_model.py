@@ -450,9 +450,9 @@ class Team():
 
         # A very simple reward for a team leader is the total rewards gathered by its team
         # awards = self.sum_rewards() 
-        awards = self.sum_rewards() 
-
-        awards = [apples for apples  in apples_hist]
+        
+        rewards_to_team = self.sum_rewards()
+        awards = [team_reward + apples for team_reward, apples in zip(rewards_to_team, apples_hist)]
 
         return awards
 
