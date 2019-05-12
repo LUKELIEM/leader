@@ -297,15 +297,6 @@ class CrossingEnv(gym.Env):
                     THEM_hit += 1
         return US_hit, THEM_hit
 
-    # A function that returns how many apples   
-    def _apples_in_zone(targetzone):
-
-        (x,y),(width, height) = targetzone
-        apples = np.sum(self.initial_food[x:x+width, y:y+height])
-        return apples
-
-
-
     # A function to take the game one step forward
     # Inputs: a list of actions indexed by agent
     def _step(self, action_n):
@@ -400,6 +391,9 @@ class CrossingEnv(gym.Env):
                     x,y = self.agent_locations[i]
                     self.target_zones[team_index] = ((x,y),(TARGET_WIDTH,TARGET_HEIGHT))  # set the team's target zone
 
+                    # 5-11-2019 Update leader metrics - num apples in target zone
+                    self.apples_targetzone[team_index] = np.sum(np.clip(self.food[x:x+TARGET_WIDTH, y:y+TARGET_HEIGHT],0,1))
+
             elif self.agent_types[i] is 'crawler':    # crawler-leader or follower
 
                 if self.tagged[i]:   # skip agents that are tagged
@@ -429,13 +423,12 @@ class CrossingEnv(gym.Env):
                         self.target_zones[team_index] = ((x,y),(TARGET_WIDTH,TARGET_HEIGHT))  # set the team's target zone
 
                         # 5-11-2019 Update leader metrics - num apples in target zone
-                        self.apples_targetzone[team_index] = _apples_in_zone(self.target_zones[team_index])
+                        self.apples_targetzone[team_index] = np.sum(np.clip(self.food[x:x+TARGET_WIDTH, y:y+TARGET_HEIGHT],0,1))
             else:
                 raise Exception('Invalid type-role for agent {}: {}-{}'.format(i, self.agent_types[i],self.agent_roles[i]))
 
         # Debug agent movements
         # print (self.agent_locations)
-        print (self.apples_targetzone)
       
         # (3) Set target and banned zones and generate metrics
         # Now that the agents' positions are final, we place the banned or target zone into the agents' game spaces.
@@ -580,11 +573,15 @@ class CrossingEnv(gym.Env):
 
         for i, agent in enumerate(self.agent_locations):
             if (self.agent_types[i] is 'drone'):    # drone
-                info_n = None
+                team_index = self._find_team(i)    # find its team
+                if team_index is not None:
+                    info_n[i] = self.apples_targetzone[team_index]
+                else:
+                    raise Exception("Leader agent {} has no team!".format(i))
             elif (self.agent_types[i] is 'crawler'):    # drone
                 # 03-02-2019  Add in_bannedzone and in_targetzone as agent metrics
-                info_n = [(self.tagged[i], self.fire_laser[i], self.US_tagged[i], self.THEM_tagged[i],  \
-                    self.in_bannedzone[i], self.in_targetzone[i]) for i in range(self.n_agents)] 
+                info_n[i] = (self.tagged[i], self.fire_laser[i], self.US_tagged[i], self.THEM_tagged[i],  \
+                    self.in_bannedzone[i], self.in_targetzone[i])
 
         return obs_n, reward_n, done_n, info_n
 
@@ -919,7 +916,7 @@ class CrossingEnv(gym.Env):
 
 
 _spec = {
-    'id': 'xTeam-Luke-v056',
+    'id': 'xTeam-Luke-v62',
     'entry_point': CrossingEnv,
     'reward_threshold': 500,   # The environment threshold at 100 appears to be too low
 }

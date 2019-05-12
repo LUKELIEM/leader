@@ -297,12 +297,12 @@ class Drone_Policy(torch.nn.Module):
     def load_info(self, info):
 
         # Get target zone metrics from info
-        # self.apples_in_targetzone, self.US_in_targetzone = info
+        self.apples_in_targetzone = info
         
         # save in episode history (to be used for leader reward calculation)
         #self.apples_hist.append(self.apples_in_targetzone)       
         #self.US_hist.append(self.US_in_targetzone)
-        self.apples_hist.append(0)
+        self.apples_hist.append(self.apples_in_targetzone)
         self.US_hist.append(0)
         return
 
@@ -446,10 +446,13 @@ class Team():
         return awards
 
     # 5-10-2019 Implement team leader reward based on total rewards gathered by its team
-    def teamleader_awards(self):
+    def teamleader_awards(self, apples_hist = None):
 
         # A very simple reward for a team leader is the total rewards gathered by its team
+        # awards = self.sum_rewards() 
         awards = self.sum_rewards() 
+
+        awards = [apples for apples  in apples_hist]
 
         return awards
 
@@ -524,7 +527,9 @@ def finish_episode(teams, learners, optimizers, gamma, cuda):
                 # - crawler-leader
                 # - crawler-follower/agent
                 if (learners[i].type is 'drone' and learners[i].role is 'leader'):   # drone-leader
-                    T_reward = t.teamleader_awards()
+                    # Debug
+                    # print (learners[i].apples_hist)
+                    T_reward = t.teamleader_awards(apples_hist= learners[i].apples_hist)
 
                 elif learners[i].type is 'crawler':    
                 
