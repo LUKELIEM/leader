@@ -165,9 +165,10 @@ class CrossingEnv(gym.Env):
             'culture': {'name':'pacifist','laser_penalty':-1.0},
             'roles': ['leader','follower'],
             'target_zone': None, 'banned_zone': None}], 
-        map_name='default', river_penalty=0, debug_agent = 0):    
+        map_name='default', river_penalty=0, debug_window = False, debug_agent = 0):    
 
-        self.root = None            # For rendering
+        self.root = None                   # For rendering
+        self.debug_window = debug_window   # 5-31-2019 Implement self.debug_window flag
 
         # Environment Parameters
         # ======================
@@ -872,8 +873,9 @@ class CrossingEnv(gym.Env):
             self.canvas.create_text(canvas_width/2,20,fill="darkblue",font="Times 15 italic bold",
                         text="The Score:")
 
-        if True:
-            # Debug view: see the first player's viewbox perspective.
+        if self.debug_window:
+            # 5-31-2019 Implement self.debug_window flag
+            # Debug view: see the debug agent's viewbox perspective.
             p1_state = self.state_n[self.debug_agent].reshape(self.viewbox_width, self.viewbox_depth, NUM_FRAMES)
             for x in range(self.viewbox_width):
                 for y in range(self.viewbox_depth):
@@ -916,7 +918,7 @@ class CrossingEnv(gym.Env):
 
 
 _spec = {
-    'id': 'xTeam-Luke-v62',
+    'id': 'xTeam-Luke-v64',
     'entry_point': CrossingEnv,
     'reward_threshold': 500,   # The environment threshold at 100 appears to be too low
 }

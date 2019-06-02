@@ -113,3 +113,48 @@ def select_action(model, obs, cuda):
     log_prob = m.log_prob(action)
 
     return action.item(), log_prob 
+
+# 6-1-2019 This is for drone leader of a team directed by a strategist
+def select_action_strat(model, obs, goals, cuda):
+    """
+    This code expects obs to be an array of the following dim:
+    (batch_idx, length)
+    
+    This is inputted into model - the agent's Policy, which outputs a probability 
+    distribution over available actions.
+    
+    Policy gradient is implemented using torch.distributions.Categorical. 
+    """
+   
+    if cuda:
+        obs = obs.cuda()
+        goals = goals.cuda()
+      
+    probs = model(obs, goals)   # The drone leader has a dual-input CNN policy
+    m = torch.distributions.Categorical(probs)
+    action = m.sample()
+    log_prob = m.log_prob(action)
+
+    return action.item(), log_prob 
+
+# 6-1-2019 This is for drone leader of a team directed by a strategist
+def select_action_strat_simple_droneleader(model, goals, cuda):
+    """
+    This code expects obs to be an array of the following dim:
+    (batch_idx, length)
+    
+    This is inputted into model - the agent's Policy, which outputs a probability 
+    distribution over available actions.
+    
+    Policy gradient is implemented using torch.distributions.Categorical. 
+    """
+   
+    if cuda:
+        goals = goals.cuda()
+      
+    probs = model(goals)   # The drone leader has a dual-input CNN policy
+    m = torch.distributions.Categorical(probs)
+    action = m.sample()
+    log_prob = m.log_prob(action)
+
+    return action.item(), log_prob 

@@ -8,6 +8,29 @@ import numpy as np
 from collections import deque
 from torch.autograd import Variable
 
+"""
+5-28-2019
+
+(1) We will implement a Strategist class. 
+
+A strategist analyzes the strategic position of the teams of agents it is responsible for directing, 
+based on observable game space and game metrics provided by the Environment. Implemented as a black 
+box, it outputs a Task/Objective for each team.
+
+(2) We will evolve the Team class to dole out team rewards to its agents based on behavioral and 
+mission awards. Each Team will have a Culture and a Mission.
+
+A team's Culture is used to shape an agent's behavior. It does so by adding an "imaginary" behavioral 
+reward/penalty on top of the reward given to the agent by the environment during training. Doing so 
+shapes the agent's policy so that it conforms to the cultural norms expected by the team.
+
+A team's Mission converts the strategist's goal into a "imaginary" mission reward, which is added 
+on top of the agent's environmental and behavorial rewards during training. Doing so shape the 
+agent's policy so that it achieves the goals demanded of the team by the strategist. 
+
+A team can dole out behavioral and mission reward to its agents regardless of type or role.
+
+"""
 
 class Crawler_Policy(torch.nn.Module):
     """
@@ -238,7 +261,7 @@ class Drone_Policy(torch.nn.Module):
 
     def _init_action_head(self):
         # input [1,1344]
-        return torch.nn.Linear(1344, self.num_actions)   # output [1,8]
+        return torch.nn.Linear(1344, self.num_actions)   # output [1,12]
     
     """
     # Disable CNN-LSTM actor critic for now
@@ -316,7 +339,333 @@ class Drone_Policy(torch.nn.Module):
         # 5-09-2019 Add drone-leader metrics
         del self.apples_hist[:]   
         del self.US_hist[:] 
+
+
+class DroneLeader_Simple(torch.nn.Module):
+    """
+    We implement a 2-layer FC NN for a drone leader. We comment out the LSTM implementation for now!
+
+    6-1-2019 Implement 2-layer FC for drone leader. The input is the delta between the current coordinate
+    of the drone and the target coordinate (goal) demanded by the strategist.
+
+    The policy works amazingly well at reaching the target coordinate. The policy is general - meaning it
+    will always reach the target coordinate even when we change the drone's starting coordinate or the
+    target coordinate.
+    """
+
+    def __init__(self, goal_params, num_actions, agent_idx=1):
+        super(DroneLeader_Simple, self).__init__()
         
+        # Team parameters
+        self.team = None
+        self.color = None
+        self.type = 'drone'
+        self.role = None   # Add  agent's team role  5-01-2019
+        self.idx = agent_idx   # This allows multiple learning agents    
+        
+        self.temperature = 1.0               # This is to adjust exploit/explore 
+        self.goal_params = goal_params       # 5-31-2019 num of params in goal (demanded by strategist)
+        self.num_actions = num_actions
+        
+        # 6-1-2019 There are two inputs
+        self.features = self._init_features()   # 2nd input = goals (delta coordinates)
+        self.action_head = self._init_action_head()
+        
+        # Deactivate actor-critic (CNN-LSTM) for now
+        # self.lstm = self._init_lstm()
+        # self.action_head = self._init_action_head()
+        # self.value_head = self._init_value_head()
+
+        # 5-10-2019 targetzone parameters
+        self.apples_in_targetzone = 0  # num of apples within a drone-leader's target zone
+        self.US_in_targetzone = 0  # num of US agents within a drone-leader's target zone
+
+        # episode history
+        self.saved_actions = []
+        self.rewards = []
+        self.log_probs = []   # Added to implement REINFORCE for PyTorch 0.4.1
+
+        # 5-09-2019 Add drone-leader metrics
+        self.apples_hist = []   # apples in target zone
+        self.US_hist = []   # US agents in target zone
+        self.deltas = []    # 5-31-2019 drone leader's delta from target coordinate (goal) 
+        
+
+    # 6-1-2019 The input (delta coordinate) is inputted thru a 1-layer FC    
+    def _init_features(self):
+        
+        layers = []
+        
+        # [1,2] input 
+        layers.append(torch.nn.Linear(self.goal_params, 32))
+        layers.append(torch.nn.ReLU(inplace=True))
+
+        return torch.nn.Sequential(*layers)
+
+
+    def _init_action_head(self):
+        # input [1,32] 
+        return torch.nn.Linear(32, self.num_actions)   # output [1,12]
+
+    
+    """
+    # Disable CNN-LSTM actor critic for now
+
+    def _init_lstm(self):
+        return torch.nn.LSTMCell(32*4*4, 256)
+
+    def _init_action_head(self):
+        return torch.nn.Linear(256, self.num_actions)
+
+    def _init_value_head(self):
+        return torch.nn.Linear(256, 1)
+    """
+       
+    # 6-1-2019 This is essentially a 2-layer fully-connected NN with softmax output
+    def forward(self, goals):
+
+        x = self.features(goals)
+        x = x.view(x.size(0), -1)  # 1 x 32
+
+        """
+        # Disable CNN-LSTM actor critic for now
+        
+        x, (hx, cx) = inputs
+        x = self.features(x)
+        x = x.view(x.size(0), -1)  # 1 x 512(4x4x32)
+        
+        hx, cx = self.lstm(x, (hx, cx))
+        x = hx
+        
+        value = self.value_head(x)
+        return action, value, (hx, cx)       
+        
+        """
+        probs = torch.nn.functional.softmax(self.action_head(x) /
+                                             self.temperature, dim=-1)
+        return probs
+
+
+    # This method attach the agent to a team by team name and color
+    def attach_to_team(self, team_name, team_color, team_role):
+        self.team = team_name
+        self.color = team_color
+        self.role = team_role
+
+    # This method resets agent info 
+    def reset_info(self):
+
+        # 5-10-2019 targetzone parameters
+        self.apples_in_targetzone = 0  # num of apples within a drone-leader's target zone
+        self.US_in_targetzone = 0  # num of US agents within a drone-leader's target zone
+
+        return
+    
+    # This method loads agent info 
+    def load_info(self, info):
+
+        # Get target zone metrics from info
+        self.apples_in_targetzone = info
+        
+        # save in episode history (to be used for leader reward calculation)
+        #self.apples_hist.append(self.apples_in_targetzone)       
+        #self.US_hist.append(self.US_in_targetzone)
+        self.apples_hist.append(self.apples_in_targetzone)
+        self.US_hist.append(0)
+        return
+
+    # This method flush the agent's history at the end of a game episode    
+    def clear_history(self):
+        del self.saved_actions[:]
+        del self.rewards[:]
+        del self.log_probs[:]
+
+        # 5-09-2019 Add drone-leader metrics
+        del self.apples_hist[:]   
+        del self.US_hist[:] 
+        del self.deltas[:] 
+        
+
+class DroneLeader_Advanced(torch.nn.Module):
+    """
+    We implement a dual-input CNN-LSTM for a drone leader. We comment out the LSTM implementation 
+    for now!
+
+    5-31-2019 Implement dual-input CNN for drone leader. The 1st input is the drone agent's complete
+    observation space of the game. The 2nd input is the delta between the current coordinate of the
+    drone and the target coordinate (goal) demanded by the strategist. 
+    """
+
+    def __init__(self, input_channels, goal_params, num_actions, agent_idx=1):
+        super(DroneLeader_Advanced, self).__init__()
+        
+        # Team parameters
+        self.team = None
+        self.color = None
+        self.type = 'drone'
+        self.role = None   # Add  agent's team role  5-01-2019
+        self.idx = agent_idx   # This allows multiple learning agents    
+        
+        self.temperature = 1.0               # This is to adjust exploit/explore 
+        self.input_channels = input_channels
+        self.goal_params = goal_params       # 5-31-2019 num of params in goal (demanded by strategist)
+        self.num_actions = num_actions
+        
+        # 5-31-2019 There are two inputs
+        self.features1 = self._init_features1()   # 2st input = observation space
+        self.features2 = self._init_features2()   # 2nd input = goals (delta coordinates)
+        self.action_head = self._init_action_head()
+        
+        # Deactivate actor-critic (CNN-LSTM) for now
+        # self.lstm = self._init_lstm()
+        # self.action_head = self._init_action_head()
+        # self.value_head = self._init_value_head()
+
+        # 5-10-2019 targetzone parameters
+        self.apples_in_targetzone = 0  # num of apples within a drone-leader's target zone
+        self.US_in_targetzone = 0  # num of US agents within a drone-leader's target zone
+
+        # episode history
+        self.saved_actions = []
+        self.rewards = []
+        self.log_probs = []   # Added to implement REINFORCE for PyTorch 0.4.1
+
+        # 5-09-2019 Add drone-leader metrics
+        self.apples_hist = []   # apples in target zone
+        self.US_hist = []   # US agents in target zone
+        self.deltas = []    # 5-31-2019 drone leader's delta from target coordinate (goal) 
+        
+
+    # The 1st input (obs space of the drone agent) is inputted thru a 3-layer CNN    
+    def _init_features1(self):
+        
+        layers = []
+        
+        # [1,input_channels,100,60] input 3D array
+        layers.append(torch.nn.Conv2d(self.input_channels,
+                                      16, kernel_size=4, stride=2, padding=1))
+        layers.append(torch.nn.BatchNorm2d(16))
+        layers.append(torch.nn.ReLU(inplace=True))
+        # [1,16,50,30] feature maps
+        layers.append(torch.nn.Conv2d(16,
+                                      16, kernel_size=4, stride=2, padding=1))
+        layers.append(torch.nn.BatchNorm2d(16))
+        layers.append(torch.nn.ReLU(inplace=True))
+        # [1,16,25,15] feature maps
+        layers.append(torch.nn.Conv2d(16,
+                                      16, kernel_size=3, stride=2, padding=0))
+        layers.append(torch.nn.BatchNorm2d(16))
+        layers.append(torch.nn.ReLU(inplace=True))
+        # [1,16,12,7] feature maps
+
+        return torch.nn.Sequential(*layers)
+
+    # 5-09-2019 The 2nd input (delta coordinate) is inputted thru a 1-layer FC    
+    def _init_features2(self):
+        
+        layers = []
+        
+        # [1,2] input 
+        layers.append(torch.nn.Linear(self.goal_params, 32))
+        layers.append(torch.nn.ReLU(inplace=True))
+
+        return torch.nn.Sequential(*layers)
+
+
+    def _init_action_head(self):
+        # input [1,1349] where 1376 = 16x12x7 + 32
+        # return torch.nn.Linear(1376, self.num_actions)   # output [1,12]
+
+        return torch.nn.Linear(32, self.num_actions)   # output [1,12]
+
+    
+    """
+    # Disable CNN-LSTM actor critic for now
+
+    def _init_lstm(self):
+        return torch.nn.LSTMCell(32*4*4, 256)
+
+    def _init_action_head(self):
+        return torch.nn.Linear(256, self.num_actions)
+
+    def _init_value_head(self):
+        return torch.nn.Linear(256, 1)
+    """
+       
+    # 5-31-2019 This method concatenate the output of the 2 inputs into a FC that 
+    # outputs the actions
+    def forward(self, obs, goals):
+
+        # 6-1-2019 Try simple FC first
+        # x1 = self.features1(obs)
+        x2 = self.features2(goals)
+
+        # x1 = x1.view(x1.size(0), -1)  # 1 x 1344(16x12x7)
+        x2 = x2.view(x2.size(0), -1)  # 1 x 32
+
+        # x = torch.cat((x1, x2), dim=1)   # 1344 + 32 = 1376
+        x = x2
+
+        """
+        # Disable CNN-LSTM actor critic for now
+        
+        x, (hx, cx) = inputs
+        x = self.features(x)
+        x = x.view(x.size(0), -1)  # 1 x 512(4x4x32)
+        
+        hx, cx = self.lstm(x, (hx, cx))
+        x = hx
+        
+
+        value = self.value_head(x)
+        return action, value, (hx, cx)       
+        
+        """
+        probs = torch.nn.functional.softmax(self.action_head(x) /
+                                             self.temperature, dim=-1)
+        return probs
+
+
+    # This method attach the agent to a team by team name and color
+    def attach_to_team(self, team_name, team_color, team_role):
+        self.team = team_name
+        self.color = team_color
+        self.role = team_role
+
+    # This method resets agent info 
+    def reset_info(self):
+
+        # 5-10-2019 targetzone parameters
+        self.apples_in_targetzone = 0  # num of apples within a drone-leader's target zone
+        self.US_in_targetzone = 0  # num of US agents within a drone-leader's target zone
+
+        return
+    
+    # This method loads agent info 
+    def load_info(self, info):
+
+        # Get target zone metrics from info
+        self.apples_in_targetzone = info
+        
+        # save in episode history (to be used for leader reward calculation)
+        #self.apples_hist.append(self.apples_in_targetzone)       
+        #self.US_hist.append(self.US_in_targetzone)
+        self.apples_hist.append(self.apples_in_targetzone)
+        self.US_hist.append(0)
+        return
+
+
+    # This method flush the agent's history at the end of a game episode    
+    def clear_history(self):
+        del self.saved_actions[:]
+        del self.rewards[:]
+        del self.log_probs[:]
+
+        # 5-09-2019 Add drone-leader metrics
+        del self.apples_hist[:]   
+        del self.US_hist[:] 
+        del self.deltas[:] 
+
 
 # Just a dumb random agent
 class Rdn_Policy():
@@ -407,7 +756,7 @@ class Team():
         self.target_zone = target_zone
 
     
-    def team_awards(self, US_hits = None, THEM_hits = None, tag_hist=None, in_banned_hist=None, in_target_hist=None):
+    def behavioral_awards(self, US_hits = None, THEM_hits = None, tag_hist=None, in_banned_hist=None, in_target_hist=None):
         culture = self.culture['name']
         if culture is 'cooperative':
             coop_factor = self.culture['coop_factor']
@@ -445,14 +794,23 @@ class Team():
             awards = None
         return awards
 
-    # 5-10-2019 Implement team leader reward based on total rewards gathered by its team
-    def teamleader_awards(self, apples_hist = None):
+    # 6-1-2019 Implement mission reward based on an agent attaining the goal given to the team by a strategist
+    def mission_awards(self, apples_hist = None, goal_deltas = None):
 
         # A very simple reward for a team leader is the total rewards gathered by its team
         # awards = self.sum_rewards() 
         
-        rewards_to_team = self.sum_rewards()
-        awards = [team_reward + apples for team_reward, apples in zip(rewards_to_team, apples_hist)]
+        # rewards_to_team = self.sum_rewards()
+        # awards = [team_reward + apples for team_reward, apples in zip(rewards_to_team, apples_hist)]
+
+        # The mission award is +1.0 if drone is at the target coordinate. Otherwise 0
+        # Sparce reward - learn too slow
+        # awards = [1.0 if (delta[0,0].numpy()+delta[0,1].numpy()) == 0 else 0 for delta in goal_deltas]
+
+        awards = [1.0/(1+abs(delta[0,0].numpy())*60+abs(delta[0,1].numpy())*20) for delta in goal_deltas]
+        # awards = [1.0/(1+abs(delta[0,0].numpy())+abs(delta[0,1].numpy())) for delta in goal_deltas]
+        # For Debug only
+        # print (awards)
 
         return awards
 
@@ -529,7 +887,7 @@ def finish_episode(teams, learners, optimizers, gamma, cuda):
                 if (learners[i].type is 'drone' and learners[i].role is 'leader'):   # drone-leader
                     # Debug
                     # print (learners[i].apples_hist)
-                    T_reward = t.teamleader_awards(apples_hist= learners[i].apples_hist)
+                    T_reward = t.mission_awards(goal_deltas = learners[i].deltas)
 
                 elif learners[i].type is 'crawler':    
                 
@@ -537,28 +895,28 @@ def finish_episode(teams, learners, optimizers, gamma, cuda):
                     culture = t.culture['name']
             
                     if culture is 'cooperative':
-                        T_reward = t.team_awards()
+                        T_reward = t.behavioral_awards()
                     elif culture is 'individualist':
-                        T_reward = t.team_awards()
+                        T_reward = t.behavioral_awards()
                     elif culture is 'no_fragging':
-                        T_reward = t.team_awards(US_hits = learners[i].US_hits)
+                        T_reward = t.behavioral_awards(US_hits = learners[i].US_hits)
                     elif culture is 'pacifist':
-                        T_reward = t.team_awards(tag_hist = learners[i].tag_hist)
+                        T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist)
                     elif culture is 'pacifist_exile':
-                        T_reward = t.team_awards(tag_hist = learners[i].tag_hist, \
+                        T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist, \
                                            in_banned_hist=learners[i].in_banned_hist)
                     # elif culture is 'pacifist_follower':    # 5-01-2019 change to pacifist_leadfollow 
                     #                                         # from leaderless pacifist
                     elif culture is 'pacifist_leadfollow':
-                        T_reward = t.team_awards(tag_hist = learners[i].tag_hist, \
+                        T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist, \
                                            in_target_hist=learners[i].in_target_hist)
                     elif culture is 'warlike':
-                        T_reward = t.team_awards(US_hits = learners[i].US_hits,THEM_hits = learners[i].THEM_hits)
+                        T_reward = t.behavioral_awards(US_hits = learners[i].US_hits,THEM_hits = learners[i].THEM_hits)
                     else:
-                        T_reward = t.team_awards()
+                        T_reward = t.behavioral_awards()
 
                     if learners[i].role is 'leader':    # crawler-leader
-                        leader_reward = t.teamleader_awards()
+                        leader_reward = t.mission_awards()
                         T_reward = [sum(x) for x in zip(T_reward, leader_reward)]
 
                 else:
