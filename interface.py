@@ -137,8 +137,8 @@ def select_action_strat(model, obs, goals, cuda):
 
     return action.item(), log_prob 
 
-# 6-1-2019 This is for drone leader of a team directed by a strategist
-def select_action_strat_simple_droneleader(model, goals, cuda):
+# 6-2-2019 This is for "simple" drone leader of a team directed by a strategist
+def select_action_strat_simple(model, goals, cuda):
     """
     This code expects obs to be an array of the following dim:
     (batch_idx, length)

@@ -191,7 +191,7 @@ class Crawler_Policy(torch.nn.Module):
 
 class Drone_Policy(torch.nn.Module):
     """
-    We implement a 3-layer CNN-LSTM for a drone agent. We comment out the LSTM implementation 
+    We implement a 3-layer CNN-LSTM for a drone follower agent. We comment out the LSTM implementation 
     for now!
 
     5-10-2019 Implement 2 target zone metrics which will be used to calculate leader reward:
@@ -340,21 +340,32 @@ class Drone_Policy(torch.nn.Module):
         del self.apples_hist[:]   
         del self.US_hist[:] 
 
+"""
+6-02-2019
+We will implement several different drone leaders to find out which one can reliably learn a trajectory
+from its current coordinate to the target coordinate specified by the strategist's goal.
 
-class DroneLeader_Simple(torch.nn.Module):
+- DroneLeader_FC32: a 2 layer FC-Softmax (32 hidden units) policy with the deltas (between drone and target coordinates) as input
+- DroneLeader_FC64: a 2 layer FC-Softmax (64 hidden units) policy with the deltas (between drone and target coordinates) as input
+- DroneLeader_CNN1: a CNN policy with a 1-frame game space of drone and goal locations as input
+
+Note: The deltas input will be normalized.
+"""
+
+class DroneLeader_FC32(torch.nn.Module):
     """
     We implement a 2-layer FC NN for a drone leader. We comment out the LSTM implementation for now!
 
-    6-1-2019 Implement 2-layer FC for drone leader. The input is the delta between the current coordinate
-    of the drone and the target coordinate (goal) demanded by the strategist.
+    6-1-2019 Implement 2-layer FC for drone leader. The input is the normalized delta between the drone's current 
+    coordinate and the target coordinate (goal) demanded by the strategist.
 
-    The policy works amazingly well at reaching the target coordinate. The policy is general - meaning it
+    The policy works amazingly well at reaching the target coordinate. The policy appears to be general - it will
     will always reach the target coordinate even when we change the drone's starting coordinate or the
     target coordinate.
     """
 
     def __init__(self, goal_params, num_actions, agent_idx=1):
-        super(DroneLeader_Simple, self).__init__()
+        super(DroneLeader_FC32, self).__init__()
         
         # Team parameters
         self.team = None
@@ -385,10 +396,8 @@ class DroneLeader_Simple(torch.nn.Module):
         self.rewards = []
         self.log_probs = []   # Added to implement REINFORCE for PyTorch 0.4.1
 
-        # 5-09-2019 Add drone-leader metrics
-        self.apples_hist = []   # apples in target zone
-        self.US_hist = []   # US agents in target zone
-        self.deltas = []    # 5-31-2019 drone leader's delta from target coordinate (goal) 
+        # 6-02-2019 drone-leader metrics
+        self.deltas = []    # drone leader's delta from target coordinate (goal) 
         
 
     # 6-1-2019 The input (delta coordinate) is inputted thru a 1-layer FC    
@@ -454,24 +463,19 @@ class DroneLeader_Simple(torch.nn.Module):
 
     # This method resets agent info 
     def reset_info(self):
-
-        # 5-10-2019 targetzone parameters
         self.apples_in_targetzone = 0  # num of apples within a drone-leader's target zone
         self.US_in_targetzone = 0  # num of US agents within a drone-leader's target zone
-
         return
     
-    # This method loads agent info 
+    # This method loads agent info (but do nothing with it!)
     def load_info(self, info):
 
         # Get target zone metrics from info
         self.apples_in_targetzone = info
         
         # save in episode history (to be used for leader reward calculation)
-        #self.apples_hist.append(self.apples_in_targetzone)       
-        #self.US_hist.append(self.US_in_targetzone)
-        self.apples_hist.append(self.apples_in_targetzone)
-        self.US_hist.append(0)
+        # self.apples_hist.append(self.apples_in_targetzone)       
+        # self.US_hist.append(self.US_in_targetzone)
         return
 
     # This method flush the agent's history at the end of a game episode    
@@ -481,10 +485,144 @@ class DroneLeader_Simple(torch.nn.Module):
         del self.log_probs[:]
 
         # 5-09-2019 Add drone-leader metrics
-        del self.apples_hist[:]   
-        del self.US_hist[:] 
         del self.deltas[:] 
+ 
+
+class DroneLeader_FC64(torch.nn.Module):
+    """
+    We implement a 2-layer FC NN for a drone leader. We comment out the LSTM implementation for now!
+
+    6-1-2019 Implement 2-layer FC for drone leader. The input is the normalized delta between the drone's current 
+    coordinate and the target coordinate (goal) demanded by the strategist.
+
+    The policy works amazingly well at reaching the target coordinate. The policy appears to be general - it will
+    will always reach the target coordinate even when we change the drone's starting coordinate or the
+    target coordinate.
+    """
+
+    def __init__(self, goal_params, num_actions, agent_idx=1):
+        super(DroneLeader_FC64, self).__init__()
         
+        # Team parameters
+        self.team = None
+        self.color = None
+        self.type = 'drone'
+        self.role = None   # Add  agent's team role  5-01-2019
+        self.idx = agent_idx   # This allows multiple learning agents    
+        
+        self.temperature = 1.0               # This is to adjust exploit/explore 
+        self.goal_params = goal_params       # 5-31-2019 num of params in goal (demanded by strategist)
+        self.num_actions = num_actions
+        
+        # 6-1-2019 There are two inputs
+        self.features = self._init_features()   # 2nd input = goals (delta coordinates)
+        self.action_head = self._init_action_head()
+        
+        # Deactivate actor-critic (CNN-LSTM) for now
+        # self.lstm = self._init_lstm()
+        # self.action_head = self._init_action_head()
+        # self.value_head = self._init_value_head()
+
+        # 5-10-2019 targetzone parameters
+        self.apples_in_targetzone = 0  # num of apples within a drone-leader's target zone
+        self.US_in_targetzone = 0  # num of US agents within a drone-leader's target zone
+
+        # episode history
+        self.saved_actions = []
+        self.rewards = []
+        self.log_probs = []   # Added to implement REINFORCE for PyTorch 0.4.1
+
+        # 6-02-2019 drone-leader metrics
+        self.deltas = []    # drone leader's delta from target coordinate (goal) 
+        
+
+    # 6-1-2019 The input (delta coordinate) is inputted thru a 1-layer FC    
+    def _init_features(self):
+        
+        layers = []
+        
+        # [1,2] input 
+        layers.append(torch.nn.Linear(self.goal_params, 64))
+        layers.append(torch.nn.ReLU(inplace=True))
+
+        return torch.nn.Sequential(*layers)
+
+
+    def _init_action_head(self):
+        # input [1,64] 
+        return torch.nn.Linear(64, self.num_actions)   # output [1,12]
+
+    
+    """
+    # Disable CNN-LSTM actor critic for now
+
+    def _init_lstm(self):
+        return torch.nn.LSTMCell(32*4*4, 256)
+
+    def _init_action_head(self):
+        return torch.nn.Linear(256, self.num_actions)
+
+    def _init_value_head(self):
+        return torch.nn.Linear(256, 1)
+    """
+       
+    # 6-1-2019 This is essentially a 2-layer fully-connected NN with softmax output
+    def forward(self, goals):
+
+        x = self.features(goals)
+        x = x.view(x.size(0), -1)  # 1 x 64
+
+        """
+        # Disable CNN-LSTM actor critic for now
+        
+        x, (hx, cx) = inputs
+        x = self.features(x)
+        x = x.view(x.size(0), -1)  # 1 x 512(4x4x32)
+        
+        hx, cx = self.lstm(x, (hx, cx))
+        x = hx
+        
+        value = self.value_head(x)
+        return action, value, (hx, cx)       
+        
+        """
+        probs = torch.nn.functional.softmax(self.action_head(x) /
+                                             self.temperature, dim=-1)
+        return probs
+
+
+    # This method attach the agent to a team by team name and color
+    def attach_to_team(self, team_name, team_color, team_role):
+        self.team = team_name
+        self.color = team_color
+        self.role = team_role
+
+    # This method resets agent info 
+    def reset_info(self):
+        self.apples_in_targetzone = 0  # num of apples within a drone-leader's target zone
+        self.US_in_targetzone = 0  # num of US agents within a drone-leader's target zone
+        return
+    
+    # This method loads agent info (but do nothing with it!)
+    def load_info(self, info):
+
+        # Get target zone metrics from info
+        self.apples_in_targetzone = info
+        
+        # save in episode history (to be used for leader reward calculation)
+        #self.apples_hist.append(self.apples_in_targetzone)       
+        #self.US_hist.append(self.US_in_targetzone)
+        return
+
+    # This method flush the agent's history at the end of a game episode    
+    def clear_history(self):
+        del self.saved_actions[:]
+        del self.rewards[:]
+        del self.log_probs[:]
+
+        # 5-09-2019 Add drone-leader metrics
+        del self.deltas[:]     
+
 
 class DroneLeader_Advanced(torch.nn.Module):
     """
@@ -814,6 +952,42 @@ class Team():
 
         return awards
 
+def calc_norm_deltas(goal, current):
+    """
+    The strategist assign a Goal to a team in the form of a target coordinate. This is the point of max favorability
+    in the favorability topological map it generates from the game space.
+
+    The method calculates the deltas between the droneleader's current coordinate from the target coordinate. The
+    deltas are normalized to the game space's width and height.
+    """
+    target_x, target_y = goal
+    current_x, current_y = current
+    delta_x = (target_x - current_x)/60   # normalize
+    delta_y = (target_y - current_y)/20    # normalize
+    deltas = torch.Tensor([delta_x,delta_y])
+    deltas = deltas.view(1, -1)
+        
+    # print(deltas)
+    return deltas   
+
+
+def calc_deltas(goal, current):
+    """
+    The strategist assign a Goal to a team in the form of a target coordinate. This is the point of max favorability
+    in the favorability topological map it generates from the game space.
+
+    The method calculates the deltas between the droneleader's current coordinate from the target coordinate. The
+    deltas are NOT normalized to the game space's width and height.
+    """
+    target_x, target_y = goal
+    current_x, current_y = current
+    delta_x = (target_x - current_x)
+    delta_y = (target_y - current_y)
+    deltas = torch.Tensor([delta_x,delta_y])
+    deltas = deltas.view(1, -1)
+        
+    # print(deltas)
+    return deltas 
 
     
 # 04-19-2019 Implemented new way to save and load checkpoints based on:
