@@ -103,7 +103,10 @@ def select_action(model, obs, cuda):
     
     # Policy is a 2-layer NN for now
     # obs = obs.view(1, -1)
-   
+    
+    #Debug
+    # print (cuda)
+
     if cuda:
         obs = obs.cuda()
       
@@ -148,7 +151,9 @@ def select_action_strat_simple(model, goals, cuda):
     
     Policy gradient is implemented using torch.distributions.Categorical. 
     """
-   
+    #Debug
+    # print (cuda)
+
     if cuda:
         goals = goals.cuda()
       

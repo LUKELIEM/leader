@@ -31,6 +31,113 @@ agent's policy so that it achieves the goals demanded of the team by the strateg
 A team can dole out behavioral and mission reward to its agents regardless of type or role.
 
 """
+class Strategist():
+    
+    teams = []
+    eyes = []  # Each team has a drone agent that serves as an eye for the strategist
+    game_spaces = []
+    game_metrics = []
+
+    
+    def __init__(self):
+        super(Strategist, self).__init__()
+        
+        # Teams parameters
+        self.teams = []
+        self.eyes = []
+        
+        # Teams' game spaces  
+        self.game_spaces = []
+        
+        # Teams' game metrics
+        self.game_metrics = []
+        
+        
+        # zone parameters
+
+        # episode history
+
+        return
+    
+    # This method accepts directorship of a team of agents, but only if the team has a drone agent
+    # that can act as eye for the strategist.
+    def accept(self, team):
+        
+        eye_found = False
+        
+        # Look for drone agent in team
+        for agent in team.members:
+            if agent.type is "drone":
+                self.eyes.append(agent)  # assign agent as team eye
+                eye_found = True
+                break
+        
+        # Only accept directorship of a team if there is a team eye
+        if eye_found:
+            self.teams.append(team)  
+        else:
+            raise Exception('Cannot accept team directorship! Team {} has no drone.'.format(team.name))
+            
+        return
+    
+    # This method abdicates directorship of a team of agents
+    def abdicate(self, team):
+        try:
+            self.teams.remove(team)
+        except ValueError:
+            print("Cannot abdicate team directorship! Team {} is not under strategist's direction.".format(team.name))
+        return
+
+    
+    # This method generates a favorability topological map from the game space 
+    def _topology(self, game_space):
+        
+        space = game_space.numpy()
+        _,_,x,y = space.shape
+        
+        topology = np.zeros((x,y))
+        
+        # Generate favorability topology based on food units in 5x5 target zone
+        for ix,iy in np.ndindex(x,y):
+            topology[ix,iy] = np.sum(space[0,0,ix:ix+5, iy:iy+5])
+
+        return topology
+
+
+    # This "black box" method generates a set of goals after analyzing the game space and metrics
+    def generate_goals(self, game_space):
+        
+        # Create a topology of favorability
+        topology = self._topology(game_space)
+        
+        # Find the coordinate of highest favorability
+        i,j = np.unravel_index(topology.argmax(), topology.shape)
+        
+        goals = [(i,j)]  # The goal is to move a team to the coordinate of highest favorability
+        
+        return goals, topology
+    
+        
+    def _assign_goal(self, goal, team):
+        
+        # TBD
+        
+        return  
+    
+    # This method flush the strategist's history at the end of a game episode    
+    def clear_history(self):
+        
+        return
+
+    # This method resets strategist by abdicating all team directorships
+    def reset(self):
+        # Abdicate directorship for all teams
+        self.teams = []
+        self.eyes = []
+        self.game_spaces = []
+        self.game_metrics = []
+        
+        return
 
 class Crawler_Policy(torch.nn.Module):
     """
@@ -945,8 +1052,17 @@ class Team():
         # Sparce reward - learn too slow
         # awards = [1.0 if (delta[0,0].numpy()+delta[0,1].numpy()) == 0 else 0 for delta in goal_deltas]
 
-        awards = [1.0/(1+abs(delta[0,0].numpy())*60+abs(delta[0,1].numpy())*20) for delta in goal_deltas]
+        awards = []
+        for delta in goal_deltas:
+            distance_from_goal = abs(delta[0,0].numpy())*60 + abs(delta[0,1].numpy())*20
+
+            if distance_from_goal is 0:
+                awards.append(3.0)
+            else:
+                awards.append(1/(1+distance_from_goal))
+
         # awards = [1.0/(1+abs(delta[0,0].numpy())+abs(delta[0,1].numpy())) for delta in goal_deltas]
+
         # For Debug only
         # print (awards)
 
@@ -1027,7 +1143,7 @@ def load_model(agent, optimizer, model_file, device = torch.device("cuda")):
     return episode
 
 
-def finish_episode(teams, learners, optimizers, gamma, cuda):
+def finish_episode(teams, learners, optimizers, gamma, cuda, pre_trained=None):
     """ 
     In RL, policy gradient is calculated at the end of an episode and only then used to update
     the weights of an agent's policy.
@@ -1042,117 +1158,131 @@ def finish_episode(teams, learners, optimizers, gamma, cuda):
     losses = [[] for i in range(num_learners)]
     T_reward = []
 
-   
+    # Unless pre_trained is given, perform policy update on all agents
+    if pre_trained is None:
+        pre_trained = [False for i in range(num_learners)]
+    else:
+        if len(pre_trained) != len(learners):
+            raise Exception('len(Pre_trained) does not match number of agents')
+
     for i in range(num_learners):
+        if pre_trained[i]:
+            # Skip policy update if the agent is pre-trained
 
-        # Debug
-        # print('Agent{} type-role: {}.{}'.format(i, learners[i].type,learners[i].role))
+            # Debug
+            # print('Skip update on Agent{} type-role: {}.{}'.format(i, learners[i].type,learners[i].role))
+            continue
+        else:
+            # The agent is a learning agent, perform policy update
 
-        R = 0
-        saved_actions = learners[i].saved_actions
+            # Debug
+            # print('Policy update on Agent{} type-role: {}.{}'.format(i, learners[i].type,learners[i].role))
+
+            R = 0
+            saved_actions = learners[i].saved_actions
         
-        for t in teams:
-            if t.name is learners[i].team:
+            for t in teams:
+                if t.name is learners[i].team:
 
-                # 5-10-2019 Implement team reward based on type and role for:
-                # - drone-leader
-                # - crawler-leader
-                # - crawler-follower/agent
-                if (learners[i].type is 'drone' and learners[i].role is 'leader'):   # drone-leader
-                    # Debug
-                    # print (learners[i].apples_hist)
-                    T_reward = t.mission_awards(goal_deltas = learners[i].deltas)
+                    # 5-10-2019 Implement team reward based on type and role for:
+                    # - drone-leader
+                    # - crawler-leader
+                    # - crawler-follower/agent
+                    if (learners[i].type is 'drone' and learners[i].role is 'leader'):   # drone-leader
+                        # Debug
+                        # print (learners[i].apples_hist)
+                        T_reward = t.mission_awards(goal_deltas = learners[i].deltas)
 
-                elif learners[i].type is 'crawler':    
+                    elif learners[i].type is 'crawler':    
                 
-                    # Based on team culture, calculate the team reward for the agent    
-                    culture = t.culture['name']
+                        # Based on team culture, calculate the team reward for the agent    
+                        culture = t.culture['name']
             
-                    if culture is 'cooperative':
-                        T_reward = t.behavioral_awards()
-                    elif culture is 'individualist':
-                        T_reward = t.behavioral_awards()
-                    elif culture is 'no_fragging':
-                        T_reward = t.behavioral_awards(US_hits = learners[i].US_hits)
-                    elif culture is 'pacifist':
-                        T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist)
-                    elif culture is 'pacifist_exile':
-                        T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist, \
-                                           in_banned_hist=learners[i].in_banned_hist)
-                    # elif culture is 'pacifist_follower':    # 5-01-2019 change to pacifist_leadfollow 
-                    #                                         # from leaderless pacifist
-                    elif culture is 'pacifist_leadfollow':
-                        T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist, \
-                                           in_target_hist=learners[i].in_target_hist)
-                    elif culture is 'warlike':
-                        T_reward = t.behavioral_awards(US_hits = learners[i].US_hits,THEM_hits = learners[i].THEM_hits)
+                        if culture is 'cooperative':
+                            T_reward = t.behavioral_awards()
+                        elif culture is 'individualist':
+                            T_reward = t.behavioral_awards()
+                        elif culture is 'no_fragging':
+                            T_reward = t.behavioral_awards(US_hits = learners[i].US_hits)
+                        elif culture is 'pacifist':
+                            T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist)
+                        elif culture is 'pacifist_exile':
+                            T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist, \
+                                               in_banned_hist=learners[i].in_banned_hist)
+                        # elif culture is 'pacifist_follower':    # 5-01-2019 change to pacifist_leadfollow 
+                        #                                         # from leaderless pacifist
+                        elif culture is 'pacifist_leadfollow':
+                            T_reward = t.behavioral_awards(tag_hist = learners[i].tag_hist, \
+                                               in_target_hist=learners[i].in_target_hist)
+                        elif culture is 'warlike':
+                            T_reward = t.behavioral_awards(US_hits = learners[i].US_hits,THEM_hits = learners[i].THEM_hits)
+                        else:
+                            T_reward = t.behavioral_awards()
+
+                        if learners[i].role is 'leader':    # crawler-leader
+                            leader_reward = t.mission_awards()
+                            T_reward = [sum(x) for x in zip(T_reward, leader_reward)]
+
                     else:
-                        T_reward = t.behavioral_awards()
-
-                    if learners[i].role is 'leader':    # crawler-leader
-                        leader_reward = t.mission_awards()
-                        T_reward = [sum(x) for x in zip(T_reward, leader_reward)]
-
-                else:
-                    raise Exception('Unexpected agent type-role: {}.{}'.format(learners[i].type,learners[i].role))
- 
-                # For debug only
-                # print('Agent{} receives tribal award from Team{}'.format(i,t.name))
-                # print (T_reward)
-                # print (learners[i].rewards)
+                        raise Exception('Unexpected agent type-role: {}.{}'.format(learners[i].type,learners[i].role))
+     
+                    # For debug only
+                    # print('Agent{} receives tribal award from Team{}'.format(i,t.name))
+                    # print (T_reward)
+                    # print (learners[i].rewards)
                 
-        # Do not implement actor-critic for now
-        # value_losses = []
-        
-        rewards = deque()
-
-        for r,T in zip(learners[i].rewards[::-1],T_reward[::-1]):
-            # The agent is incentivized to cooperate by a  team bonus
-            R = r + T + gamma * R
-            rewards.appendleft(R)
+            # Do not implement actor-critic for now
+            # value_losses = []
             
-        rewards = list(rewards)
-        rewards = torch.Tensor(rewards)
-        if cuda:
-            rewards = rewards.cuda()
+            rewards = deque()
 
-        # z-score rewards
-        rewards = (rewards - rewards.mean()) / (1.1e-7+rewards.std())
-        
-        #Debug     
-        #print (rewards)       
-        
-        """
-        Do not implement actor-critic for now!!!
-        for (log_prob, state_value), r in zip(saved_actions, rewards):
-            reward = r - state_value.data[0]
-            policy_losses.append(-log_prob * Variable(reward))
-            r = torch.Tensor([r])
+            for r,T in zip(learners[i].rewards[::-1],T_reward[::-1]):
+                # The agent is incentivized to cooperate by a  team bonus
+                R = r + T + gamma * R
+                rewards.appendleft(R)
+                
+            rewards = list(rewards)
+            rewards = torch.Tensor(rewards)
             if cuda:
-                r = r.cuda()
-            value_losses.append(torch.nn.functional.smooth_l1_loss(state_value,
-                                                               Variable(r)))
+                rewards = rewards.cuda()
 
-        optimizer.zero_grad()
-        loss = torch.stack(policy_losses).sum() + torch.stack(value_losses).sum()
-        loss.backward()        
-        
-        
-        """
-        for log_prob, r in zip(saved_actions, rewards):
-            r = torch.Tensor([r])
-            if cuda:
-                r = r.cuda()
-            policy_losses[i].append(-log_prob * Variable(r))
+            # z-score rewards
+            rewards = (rewards - rewards.mean()) / (1.1e-7+rewards.std())
+            
+            #Debug     
+            #print (rewards)       
+            
+            """
+            Do not implement actor-critic for now!!!
+            for (log_prob, state_value), r in zip(saved_actions, rewards):
+                reward = r - state_value.data[0]
+                policy_losses.append(-log_prob * Variable(reward))
+                r = torch.Tensor([r])
+                if cuda:
+                    r = r.cuda()
+                value_losses.append(torch.nn.functional.smooth_l1_loss(state_value,
+                                                                   Variable(r)))
 
-        optimizers[i].zero_grad()
-        losses[i] = torch.stack(policy_losses[i]).sum()
-        losses[i].backward()
-        
-        # Gradient Clipping Update: prevent exploding gradient
-        total_norms[i] = torch.nn.utils.clip_grad_norm_(learners[i].parameters(), 8000)
-        
-        optimizers[i].step()
+            optimizer.zero_grad()
+            loss = torch.stack(policy_losses).sum() + torch.stack(value_losses).sum()
+            loss.backward()        
+            
+            
+            """
+            for log_prob, r in zip(saved_actions, rewards):
+                r = torch.Tensor([r])
+                if cuda:
+                    r = r.cuda()
+                policy_losses[i].append(-log_prob * Variable(r))
+
+            optimizers[i].zero_grad()
+            losses[i] = torch.stack(policy_losses[i]).sum()
+            losses[i].backward()
+            
+            # Gradient Clipping Update: prevent exploding gradient
+            total_norms[i] = torch.nn.utils.clip_grad_norm_(learners[i].parameters(), 8000)
+            
+            optimizers[i].step()
 
     # clear all agent's history only at the end of episode; they are needed for team reward calc
     for i in range(num_learners):
